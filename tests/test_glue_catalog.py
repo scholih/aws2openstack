@@ -131,3 +131,54 @@ def test_list_databases_with_pagination(mock_boto_client):
 
     assert len(databases) == 2
     assert mock_glue.get_databases.call_count == 2
+
+
+from datetime import datetime, timezone
+
+
+@patch("boto3.client")
+def test_list_tables(mock_boto_client):
+    """Test listing tables from a database."""
+    mock_glue = MagicMock()
+    mock_sts = MagicMock()
+    mock_sts.get_caller_identity.return_value = {"Account": "123456789012"}
+
+    # Mock get_tables response
+    mock_glue.get_tables.return_value = {
+        "TableList": [
+            {
+                "Name": "events",
+                "StorageDescriptor": {
+                    "Location": "s3://bucket/events/",
+                    "Columns": [{"Name": f"col{i}", "Type": "string"} for i in range(10)],
+                },
+                "PartitionKeys": [
+                    {"Name": "date", "Type": "date"},
+                    {"Name": "region", "Type": "string"},
+                ],
+                "Parameters": {
+                    "table_type": "ICEBERG",
+                },
+                "UpdateTime": datetime(2026, 1, 7, 10, 0, 0, tzinfo=timezone.utc),
+            }
+        ]
+    }
+
+    def client_factory(service, region_name=None):
+        if service == "glue":
+            return mock_glue
+        elif service == "sts":
+            return mock_sts
+        raise ValueError(f"Unexpected service: {service}")
+
+    mock_boto_client.side_effect = client_factory
+
+    assessor = GlueCatalogAssessor(region="us-east-1")
+    tables = assessor.list_tables("analytics_prod")
+
+    assert len(tables) == 1
+    assert tables[0].table_name == "events"
+    assert tables[0].database_name == "analytics_prod"
+    assert tables[0].storage_location == "s3://bucket/events/"
+    assert tables[0].column_count == 10
+    assert len(tables[0].partition_keys) == 2

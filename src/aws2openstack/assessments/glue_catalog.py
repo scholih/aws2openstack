@@ -1,8 +1,10 @@
 """AWS Glue Catalog assessment."""
 
+from datetime import datetime
+
 import boto3
 
-from aws2openstack.models.catalog import GlueDatabase
+from aws2openstack.models.catalog import GlueDatabase, GlueTable
 
 
 class GlueCatalogAssessor:
@@ -58,3 +60,133 @@ class GlueCatalogAssessor:
                 break
 
         return databases
+
+    def list_tables(self, database_name: str) -> list[GlueTable]:
+        """List all tables in a database.
+
+        Args:
+            database_name: Name of the database
+
+        Returns:
+            List of GlueTable objects
+        """
+        tables: list[GlueTable] = []
+        next_token = None
+
+        while True:
+            if next_token:
+                response = self.glue_client.get_tables(
+                    DatabaseName=database_name,
+                    NextToken=next_token,
+                )
+            else:
+                response = self.glue_client.get_tables(DatabaseName=database_name)
+
+            for table_dict in response.get("TableList", []):
+                table = self._parse_table(database_name, table_dict)
+                tables.append(table)
+
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+
+        return tables
+
+    def _parse_table(self, database_name: str, table_dict: dict) -> GlueTable:
+        """Parse Glue table metadata into GlueTable model.
+
+        Args:
+            database_name: Name of the database
+            table_dict: Raw table metadata from Glue API
+
+        Returns:
+            GlueTable object
+        """
+        table_name = table_dict["Name"]
+        storage_desc = table_dict.get("StorageDescriptor", {})
+        parameters = table_dict.get("Parameters", {})
+
+        # Extract basic info
+        storage_location = storage_desc.get("Location", "")
+        columns = storage_desc.get("Columns", [])
+        column_count = len(columns)
+        partition_keys = [pk["Name"] for pk in table_dict.get("PartitionKeys", [])]
+
+        # Determine table format
+        table_type = parameters.get("table_type", "").upper()
+        if table_type == "ICEBERG":
+            table_format = "ICEBERG"
+            is_iceberg = True
+        else:
+            # Try to infer from SerDe or InputFormat
+            input_format = storage_desc.get("InputFormat", "")
+            if "parquet" in input_format.lower():
+                table_format = "PARQUET"
+            elif "orc" in input_format.lower():
+                table_format = "ORC"
+            else:
+                table_format = "UNKNOWN"
+            is_iceberg = False
+
+        # Get size estimate (if available)
+        estimated_size_gb = None
+        # Note: Size statistics may be in Parameters as 'numBytes' or similar
+        # For now, we'll leave as None and enhance later if needed
+
+        # Get last updated time
+        last_updated = table_dict.get("UpdateTime")
+        if last_updated and not isinstance(last_updated, datetime):
+            # If it's not already a datetime, try to parse it
+            last_updated = None
+
+        # Determine migration readiness
+        migration_readiness, notes = self._assess_migration_readiness(
+            is_iceberg, table_format, storage_location
+        )
+
+        return GlueTable(
+            database_name=database_name,
+            table_name=table_name,
+            table_format=table_format,
+            storage_location=storage_location,
+            estimated_size_gb=estimated_size_gb,
+            partition_keys=partition_keys,
+            column_count=column_count,
+            last_updated=last_updated,
+            is_iceberg=is_iceberg,
+            migration_readiness=migration_readiness,
+            notes=notes,
+        )
+
+    def _assess_migration_readiness(
+        self, is_iceberg: bool, table_format: str, storage_location: str
+    ) -> tuple[str, list[str]]:
+        """Assess migration readiness for a table.
+
+        Args:
+            is_iceberg: Whether the table is Iceberg format
+            table_format: Table format string
+            storage_location: S3 storage location
+
+        Returns:
+            Tuple of (readiness status, list of notes)
+        """
+        notes: list[str] = []
+
+        if is_iceberg:
+            if storage_location.startswith("s3://"):
+                return "READY", notes
+            else:
+                notes.append("Non-S3 storage location")
+                return "UNKNOWN", notes
+
+        if table_format in ("PARQUET", "ORC", "AVRO"):
+            notes.append(f"{table_format} format requires conversion to Iceberg")
+            return "NEEDS_CONVERSION", notes
+
+        if table_format == "UNKNOWN":
+            notes.append("Unknown table format")
+            return "UNKNOWN", notes
+
+        notes.append(f"Unsupported format: {table_format}")
+        return "UNKNOWN", notes
