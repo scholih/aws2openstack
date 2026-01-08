@@ -1,10 +1,17 @@
 """AWS Glue Catalog assessment."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import boto3
 
-from aws2openstack.models.catalog import GlueDatabase, GlueTable
+from aws2openstack import __version__
+from aws2openstack.models.catalog import (
+    AssessmentMetadata,
+    AssessmentReport,
+    AssessmentSummary,
+    GlueDatabase,
+    GlueTable,
+)
 
 
 class GlueCatalogAssessor:
@@ -190,3 +197,59 @@ class GlueCatalogAssessor:
 
         notes.append(f"Unsupported format: {table_format}")
         return "UNKNOWN", notes
+
+    def run_assessment(self) -> AssessmentReport:
+        """Run complete Glue Catalog assessment.
+
+        Returns:
+            Complete AssessmentReport with all data
+        """
+        # Collect databases
+        databases = self.list_databases()
+
+        # Collect tables for each database
+        all_tables: list[GlueTable] = []
+        for database in databases:
+            tables = self.list_tables(database.database_name)
+            all_tables.extend(tables)
+            # Update database table count
+            database.table_count = len(tables)
+
+        # Calculate summary statistics
+        iceberg_count = sum(1 for t in all_tables if t.is_iceberg)
+        ready_count = sum(1 for t in all_tables if t.migration_readiness == "READY")
+        needs_conversion_count = sum(
+            1 for t in all_tables if t.migration_readiness == "NEEDS_CONVERSION"
+        )
+        unknown_count = sum(1 for t in all_tables if t.migration_readiness == "UNKNOWN")
+
+        total_size_gb = sum(
+            t.estimated_size_gb for t in all_tables if t.estimated_size_gb is not None
+        )
+
+        # Create metadata
+        metadata = AssessmentMetadata(
+            timestamp=datetime.now(timezone.utc),
+            region=self.region,
+            aws_account_id=self.aws_account_id,
+            tool_version=__version__,
+        )
+
+        # Create summary
+        summary = AssessmentSummary(
+            total_databases=len(databases),
+            total_tables=len(all_tables),
+            iceberg_tables=iceberg_count,
+            migration_ready=ready_count,
+            needs_conversion=needs_conversion_count,
+            unknown=unknown_count,
+            total_estimated_size_gb=total_size_gb,
+        )
+
+        # Create report
+        return AssessmentReport(
+            assessment_metadata=metadata,
+            summary=summary,
+            databases=databases,
+            tables=all_tables,
+        )

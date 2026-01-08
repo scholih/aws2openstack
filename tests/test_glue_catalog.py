@@ -134,6 +134,7 @@ def test_list_databases_with_pagination(mock_boto_client):
 
 
 from datetime import datetime, timezone
+from aws2openstack.models.catalog import AssessmentReport
 
 
 @patch("boto3.client")
@@ -182,3 +183,77 @@ def test_list_tables(mock_boto_client):
     assert tables[0].storage_location == "s3://bucket/events/"
     assert tables[0].column_count == 10
     assert len(tables[0].partition_keys) == 2
+
+
+@patch("boto3.client")
+def test_run_assessment(mock_boto_client):
+    """Test full assessment run."""
+    mock_glue = MagicMock()
+    mock_sts = MagicMock()
+    mock_sts.get_caller_identity.return_value = {"Account": "123456789012"}
+
+    # Mock get_databases
+    mock_glue.get_databases.return_value = {
+        "DatabaseList": [
+            {"Name": "db1"},
+            {"Name": "db2"},
+        ]
+    }
+
+    # Mock get_tables for each database
+    def get_tables_side_effect(DatabaseName, **kwargs):
+        if DatabaseName == "db1":
+            return {
+                "TableList": [
+                    {
+                        "Name": "table1",
+                        "StorageDescriptor": {
+                            "Location": "s3://bucket/table1/",
+                            "Columns": [{"Name": "col1"}],
+                        },
+                        "PartitionKeys": [],
+                        "Parameters": {"table_type": "ICEBERG"},
+                    }
+                ]
+            }
+        elif DatabaseName == "db2":
+            return {
+                "TableList": [
+                    {
+                        "Name": "table2",
+                        "StorageDescriptor": {
+                            "Location": "s3://bucket/table2/",
+                            "Columns": [{"Name": "col1"}, {"Name": "col2"}],
+                            "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+                        },
+                        "PartitionKeys": [{"Name": "date", "Type": "date"}],
+                        "Parameters": {},
+                    }
+                ]
+            }
+        return {"TableList": []}
+
+    mock_glue.get_tables.side_effect = get_tables_side_effect
+
+    def client_factory(service, region_name=None):
+        if service == "glue":
+            return mock_glue
+        elif service == "sts":
+            return mock_sts
+        raise ValueError(f"Unexpected service: {service}")
+
+    mock_boto_client.side_effect = client_factory
+
+    assessor = GlueCatalogAssessor(region="us-east-1")
+    report = assessor.run_assessment()
+
+    assert isinstance(report, AssessmentReport)
+    assert report.assessment_metadata.region == "us-east-1"
+    assert report.assessment_metadata.aws_account_id == "123456789012"
+    assert report.summary.total_databases == 2
+    assert report.summary.total_tables == 2
+    assert report.summary.iceberg_tables == 1
+    assert report.summary.migration_ready == 1
+    assert report.summary.needs_conversion == 1
+    assert len(report.databases) == 2
+    assert len(report.tables) == 2
