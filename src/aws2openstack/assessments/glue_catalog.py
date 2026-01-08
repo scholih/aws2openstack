@@ -1,6 +1,7 @@
 """AWS Glue Catalog assessment."""
 
 from datetime import datetime, timezone
+from typing import Any
 
 import boto3
 
@@ -90,7 +91,7 @@ class GlueCatalogAssessor:
                 response = self.glue_client.get_tables(DatabaseName=database_name)
 
             for table_dict in response.get("TableList", []):
-                table = self._parse_table(database_name, table_dict)
+                table = self._parse_table(database_name, table_dict)  # type: ignore[arg-type]
                 tables.append(table)
 
             next_token = response.get("NextToken")
@@ -99,7 +100,7 @@ class GlueCatalogAssessor:
 
         return tables
 
-    def _parse_table(self, database_name: str, table_dict: dict) -> GlueTable:
+    def _parse_table(self, database_name: str, table_dict: dict[str, Any]) -> GlueTable:
         """Parse Glue table metadata into GlueTable model.
 
         Args:

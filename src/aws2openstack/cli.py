@@ -11,13 +11,13 @@ from aws2openstack.reporters.markdown_reporter import MarkdownReporter
 
 @click.group()
 @click.version_option()
-def cli():
+def cli() -> None:
     """AWS to OpenStack migration tools."""
     pass
 
 
 @cli.group()
-def assess():
+def assess() -> None:
     """Run migration assessments."""
     pass
 
@@ -39,7 +39,7 @@ def assess():
     required=True,
     help="Directory to write report files",
 )
-def assess_glue_catalog(region: str, profile: str | None, output_dir: Path):
+def assess_glue_catalog(region: str, profile: str | None, output_dir: Path) -> None:
     """Assess AWS Glue Catalog for migration readiness."""
     click.echo(f"Starting Glue Catalog assessment for region: {region}")
 

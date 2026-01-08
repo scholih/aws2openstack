@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from tabulate import tabulate
+from tabulate import tabulate  # type: ignore[import-untyped]
 
-from aws2openstack.models.catalog import AssessmentReport
+from aws2openstack.models.catalog import AssessmentReport, GlueTable
 
 
 class MarkdownReporter:
@@ -134,7 +134,7 @@ class MarkdownReporter:
             return "## Detailed Table Inventory\n\nNo tables found."
 
         # Group tables by database
-        databases = {}
+        databases: dict[str, list[GlueTable]] = {}
         for table in report.tables:
             if table.database_name not in databases:
                 databases[table.database_name] = []
