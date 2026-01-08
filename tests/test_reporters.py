@@ -110,3 +110,50 @@ def test_json_reporter_valid_json(sample_report, tmp_path):
         data = json.load(f)
 
     assert isinstance(data, dict)
+
+
+from aws2openstack.reporters.markdown_reporter import MarkdownReporter
+
+
+def test_markdown_reporter_generate(sample_report, tmp_path):
+    """Test Markdown report generation."""
+    output_path = tmp_path / "test-report.md"
+
+    reporter = MarkdownReporter()
+    reporter.generate(sample_report, output_path)
+
+    assert output_path.exists()
+
+    # Verify content
+    content = output_path.read_text()
+    assert "# AWS Glue Catalog Assessment" in content
+    assert "us-east-1" in content
+    assert "123456789012" in content
+    assert "test_db" in content
+    assert "iceberg_table" in content
+    assert "parquet_table" in content
+
+
+def test_markdown_reporter_includes_summary(sample_report, tmp_path):
+    """Test Markdown report includes executive summary."""
+    output_path = tmp_path / "test-report.md"
+
+    reporter = MarkdownReporter()
+    reporter.generate(sample_report, output_path)
+
+    content = output_path.read_text()
+    assert "## Executive Summary" in content
+    assert "Total Tables:** 2" in content
+    assert "Iceberg Tables:** 1" in content
+    assert "Migration Ready:** 1" in content
+
+
+def test_markdown_reporter_includes_recommendations(sample_report, tmp_path):
+    """Test Markdown report includes recommendations."""
+    output_path = tmp_path / "test-report.md"
+
+    reporter = MarkdownReporter()
+    reporter.generate(sample_report, output_path)
+
+    content = output_path.read_text()
+    assert "## Recommendations" in content
