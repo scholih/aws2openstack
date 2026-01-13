@@ -48,7 +48,19 @@
       "Bash(bd list:*)",
       "Bash(bd ready:*)",
       "mcp__plugin_serena_serena__create_text_file",
-      "mcp__plugin_serena_serena__replace_content"
+      "mcp__plugin_serena_serena__replace_content",
+      "Bash(bd update:*)",
+      "Bash(bd show:*)",
+      "Bash(source:*)",
+      "Bash(python3.12 -m venv:*)",
+      "Bash(python3 -m pip:*)",
+      "Bash(/opt/homebrew/bin/python3.12:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/pip3 install:*)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(.venv/bin/alembic init:*)",
+      "Bash(.venv/bin/alembic revision:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
