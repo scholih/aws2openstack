@@ -10,8 +10,18 @@ wheels/
 .venv
 
 # Tool directories
-.claude/
 .serena/
+
+# NOTE: .beads/ and .claude/ are tracked in git for easy onboarding
+# But ignore runtime/lock files
+.beads/bd.sock
+.beads/daemon.lock
+.beads/daemon.pid
+.beads/daemon.log
+.beads/beads.db-shm
+.beads/beads.db-wal
+.beads/.local_version
+.beads/last-touched
 
 # Worktrees
 .worktrees/
