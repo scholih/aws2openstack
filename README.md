@@ -532,6 +532,315 @@ ruff check src/ tests/
 
 ---
 
+## Dev/Test Environment
+
+The project includes infrastructure-as-code for creating ephemeral AWS test environments with realistic Glue Catalog data. This enables fast development and testing without needing access to production AWS accounts.
+
+### What You Get
+
+**Complete test environment with:**
+- 2 Glue databases (`test_analytics`, `test_logs`)
+- 5 Glue tables with realistic schemas (Parquet, Iceberg, ORC, CSV)
+- S3 bucket with ~5-10 MB of synthetic test data
+- Local PostgreSQL database for assessment storage
+- Terraform state management (S3 + DynamoDB)
+
+**Provisioning time:** < 5 minutes
+**Cost:** ~$0.001 per session (essentially free)
+**Region:** eu-central-1 (configurable)
+
+### Prerequisites
+
+**Required tools:**
+- AWS CLI configured with credentials
+- Terraform >= 1.5
+- Docker and Docker Compose
+- Python 3.12+
+- Make
+
+**AWS permissions needed:**
+- `glue:*` on test databases/tables
+- `s3:*` on test buckets
+- `dynamodb:*` on state lock table
+
+**Check prerequisites:**
+```bash
+make test-env-validate
+```
+
+### Quick Start
+
+#### 1. One-Time Bootstrap
+
+Create Terraform state infrastructure (S3 bucket + DynamoDB table):
+
+```bash
+make bootstrap
+```
+
+This creates:
+- S3 bucket: `aws2openstack-tfstate-XXXXXXXX`
+- DynamoDB table: `aws2openstack-tfstate-locks`
+
+**Important:** Copy the backend configuration from the output and add it to `terraform/test-env/main.tf` (uncomment the backend block and update the bucket name).
+
+#### 2. Create Environment
+
+```bash
+# Copy environment template
+cp .env.test.template .env.test
+
+# Install test data generation dependencies
+pip install -e ".[test-env]"
+
+# Create full environment
+make test-env-up
+```
+
+This will:
+1. Start PostgreSQL in Docker
+2. Generate synthetic test data (5 datasets)
+3. Provision AWS resources (Glue + S3)
+4. Upload data to S3
+5. Run database migrations
+
+**Output:**
+```
+✅ Environment ready!
+
+Glue Databases:
+  - test_analytics (4 tables)
+  - test_logs (1 table)
+
+S3 Bucket: aws2openstack-test-data-XXXXXXXX
+
+PostgreSQL: localhost:5432/aws2openstack_test
+```
+
+#### 3. Run Assessment
+
+```bash
+# Load environment variables
+source .env.test
+
+# Run assessment against test environment
+aws2openstack assess glue-catalog \
+  --region eu-central-1 \
+  --output-dir ./test-assessment \
+  --save-to-db
+
+# View results in dashboard
+streamlit run src/aws2openstack/dashboard/app.py
+```
+
+#### 4. Teardown
+
+```bash
+# Destroy AWS resources (keeps PostgreSQL data)
+make test-env-down
+
+# Full cleanup (removes generated test data too)
+make test-env-clean
+```
+
+### Available Commands
+
+**Environment Management:**
+```bash
+make bootstrap          # One-time: Create Terraform state infrastructure
+make test-env-up        # Create complete test environment
+make test-env-down      # Destroy AWS resources, stop PostgreSQL
+make test-env-clean     # Full cleanup including generated data
+make test-env-status    # Show current environment state
+make test-env-validate  # Check prerequisites before provisioning
+```
+
+**Troubleshooting:**
+```bash
+make test-env-logs      # Show PostgreSQL container logs
+make test-env-shell     # Open psql shell to database
+```
+
+### Test Data Details
+
+**Synthetic datasets generated with Faker:**
+
+| Dataset | Format | Rows | Partitions | Size |
+|---------|--------|------|------------|------|
+| Sales Data | Parquet | 1000 | year/month | ~2 MB |
+| Customer Data | Iceberg/Parquet | 500 | none | ~500 KB |
+| Events Raw | Parquet | 1000 | date | ~1.5 MB |
+| Metrics ORC | ORC | 500 | none | ~400 KB |
+| Access Logs | CSV | 1000 | date | ~800 KB |
+
+**All tables are migration-ready** (Parquet/Iceberg formats) for testing the assessment tool's happy path.
+
+**Deterministic:** Uses fixed random seed (42) for reproducible data across runs.
+
+### Configuration
+
+**Environment variables (.env.test):**
+```bash
+# Database
+DATABASE_URL=postgresql://testuser:testpass@localhost:5432/aws2openstack_test
+
+# AWS
+AWS_REGION=eu-central-1
+AWS_PROFILE=default
+
+# Test Data
+TEST_DATA_ROWS=1000  # Rows per dataset
+```
+
+**Terraform variables (terraform/test-env/variables.tf):**
+```hcl
+variable "aws_region" {
+  default = "eu-central-1"
+}
+
+variable "database_count" {
+  default = 2  # Number of Glue databases
+}
+```
+
+### Development Workflow
+
+**Typical development cycle:**
+
+```bash
+# 1. Create test environment
+make test-env-up
+
+# 2. Make code changes
+# ... edit code ...
+
+# 3. Test against test environment
+source .env.test
+pytest tests/test_glue_catalog.py
+
+# 4. Run full assessment
+aws2openstack assess glue-catalog \
+  --region eu-central-1 \
+  --output-dir ./test-output \
+  --save-to-db
+
+# 5. View in dashboard
+streamlit run src/aws2openstack/dashboard/app.py
+
+# 6. When done, teardown
+make test-env-down
+```
+
+**For rapid iteration:** Keep the environment running and just re-run assessments. The infrastructure is stable once created.
+
+### Troubleshooting
+
+**Port 5432 already in use:**
+```bash
+# Check what's using the port
+lsof -i :5432
+
+# Stop conflicting service or change port in docker-compose.yml
+```
+
+**AWS credentials expired:**
+```bash
+# Refresh credentials
+aws sso login --profile your-profile
+
+# Verify
+aws sts get-caller-identity
+```
+
+**Terraform state locked:**
+```bash
+# Check lock
+aws dynamodb get-item \
+  --table-name aws2openstack-tfstate-locks \
+  --key '{"LockID":{"S":"aws2openstack-tfstate/test-env/terraform.tfstate"}}'
+
+# Force unlock (if stale)
+cd terraform/test-env && terraform force-unlock <lock-id>
+```
+
+**Test data generation fails:**
+```bash
+# Ensure dependencies installed
+pip install -e ".[test-env]"
+
+# Check output directory permissions
+ls -la testdata/
+
+# Re-run generation
+python scripts/generate_test_data.py
+```
+
+### Cost Management
+
+**AWS resources:**
+- Glue Catalog: Free (first million objects)
+- S3 storage: ~$0.02/month for 10 MB
+- S3 requests: ~$0.01/session
+- DynamoDB: ~$0.25/month (PAY_PER_REQUEST)
+
+**Best practice:** Create when needed, destroy after testing (`make test-env-down`)
+
+**Safety net:** S3 lifecycle rule automatically deletes objects after 7 days
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Local Machine                             │
+│                                                              │
+│  Docker Compose                Makefile                      │
+│  ┌─────────────┐              ┌────────────────────┐       │
+│  │ PostgreSQL  │◄─────────────┤ Orchestration      │       │
+│  │   :5432     │              │ - Validate         │       │
+│  └─────────────┘              │ - Generate data    │       │
+│                                │ - Terraform apply  │       │
+│  Python Script                 │ - Upload to S3     │       │
+│  ┌─────────────┐              │ - Run migrations   │       │
+│  │ generate_   │──────────────►│                    │       │
+│  │ test_data   │              └────────────────────┘       │
+│  └─────────────┘                                            │
+└────────────────────────────────┬────────────────────────────┘
+                                 │
+                                 │ Terraform
+                                 ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    AWS (eu-central-1)                        │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ State Management (Long-lived)                         │  │
+│  │                                                        │  │
+│  │  S3: aws2openstack-tfstate-XXXXXXXX                  │  │
+│  │  DynamoDB: aws2openstack-tfstate-locks               │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ Test Environment (Ephemeral)                          │  │
+│  │                                                        │  │
+│  │  Glue Databases:                                      │  │
+│  │    - test_analytics (4 tables)                        │  │
+│  │    - test_logs (1 table)                              │  │
+│  │                                                        │  │
+│  │  S3: aws2openstack-test-data-XXXXXXXX                │  │
+│  │    - sales-parquet/ (partitioned)                     │  │
+│  │    - customers-iceberg/                               │  │
+│  │    - events-parquet/ (partitioned)                    │  │
+│  │    - metrics-orc/                                     │  │
+│  │    - access-logs-csv/ (partitioned)                   │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Design Documentation
+
+Full design document: `docs/plans/2026-01-13-dev-test-environment-design.md`
+
+---
+
 ## Development Setup
 
 ### Required Tooling
