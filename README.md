@@ -173,6 +173,253 @@ Both strategies share the same core pipeline (assess → transform → generate)
 
 ---
 
+## Data Quality & Validation
+
+Data quality validation is **core infrastructure**, not optional. Every migration includes automated validation at multiple stages with comprehensive reporting.
+
+### Validation Stages
+
+**1. Pre-Migration Assessment**
+```
+Schema validation:     ✓ Column types compatible
+                       ✓ Partition schemes supported
+                       ✓ Nested types handled
+Size estimation:       ✓ Storage requirements calculated
+                       ✓ Network bandwidth planned
+Format compatibility:  ✓ Iceberg/Parquet/ORC versions supported
+```
+
+**2. During Migration (Real-time)**
+```
+Transfer validation:   ✓ Bytes copied vs expected
+                       ✓ Files transferred vs catalog count
+                       ✓ Error rate monitoring
+Progress tracking:     ✓ Per-table completion %
+                       ✓ ETA calculations
+                       ✓ Bottleneck detection
+```
+
+**3. Post-Migration (Certification)**
+```
+Completeness:          ✓ Row count reconciliation
+                       ✓ Partition coverage verification
+                       ✓ All tables migrated check
+Data integrity:        ✓ Checksum validation (sample-based)
+                       ✓ Schema round-trip verification
+                       ✓ NULL value distribution match
+Query validation:      ✓ Test queries produce identical results
+                       ✓ Aggregation accuracy
+                       ✓ Join correctness
+```
+
+### Quality Checks Implemented
+
+**Table-Level Validation:**
+```sql
+-- Example: Completeness check stored in PostgreSQL
+CREATE TABLE validation_results (
+    id UUID PRIMARY KEY,
+    migration_job_id UUID REFERENCES migration_jobs(id),
+    validation_type VARCHAR(50),  -- 'row_count', 'checksum', 'schema', 'sample'
+    status VARCHAR(20),            -- 'passed', 'failed', 'warning'
+    source_value TEXT,
+    target_value TEXT,
+    difference TEXT,
+    validated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Validation Types:**
+
+1. **Row Count Reconciliation**
+   - Source: `SELECT COUNT(*) FROM glue_catalog.table`
+   - Target: `SELECT COUNT(*) FROM trino.schema.table`
+   - Tolerance: Configurable threshold (e.g., 0.01% for shadow running)
+
+2. **Checksum Validation**
+   - Deterministic hash of sample rows (e.g., 10,000 random rows)
+   - Includes all columns to detect silent data corruption
+   - Partition-aware sampling for large tables
+
+3. **Schema Validation**
+   - Column names match (case-insensitive option)
+   - Data types compatible (e.g., AWS BIGINT → Trino BIGINT)
+   - Partition columns preserved
+   - NOT NULL constraints maintained
+
+4. **Statistical Validation**
+   - Min/max values per numeric column
+   - Distinct value counts for low-cardinality columns
+   - NULL percentage per column
+   - String length distributions
+
+5. **Sample Data Comparison**
+   - Export 1000 rows from source and target
+   - Side-by-side comparison in validation report
+   - Human-reviewable for sensitive data migrations
+
+### Validation Workflows
+
+**Big Bang Migration:**
+```
+1. Pre-migration:  Full schema validation
+2. Post-copy:      Immediate row count + checksum validation
+3. Before cutover: Complete validation suite (all checks)
+4. Sign-off:       Generate certification report
+```
+
+**Shadow Running:**
+```
+1. Initial sync:   Full validation after baseline copy
+2. Incremental:    Validate each sync batch
+3. Continuous:     Scheduled reconciliation (hourly/daily)
+4. Dashboard:      Real-time drift detection
+5. Cutover:        Final validation + certification
+```
+
+### Monitoring & Dashboards
+
+**Streamlit Validation Dashboard:**
+
+```python
+# Real-time validation metrics
+┌─────────────────────────────────────────────────────────────┐
+│ Validation Status: 145/150 tables validated ✓               │
+│                    5 tables pending validation               │
+│                    0 validation failures                     │
+└─────────────────────────────────────────────────────────────┘
+
+Tables by Validation Status:
+  ✓ Passed:  145 (96.7%)
+  ⚠ Warning:   5 (3.3%)  - Row count drift < 0.01%
+  ✗ Failed:    0 (0%)
+
+Recent Validations:
+  analytics.events_table     ✓ Passed (1.2M rows matched)
+  logs.access_logs          ⚠ Warning (source +10 rows - incremental sync lag)
+  warehouse.orders          ✓ Passed (checksum matched)
+```
+
+**Validation Metrics:**
+- Overall completeness percentage
+- Tables pending validation
+- Failed validations requiring attention
+- Data drift detection (for shadow running)
+- Historical validation trends
+
+### Automated Reconciliation
+
+**Continuous Reconciliation Loop (Shadow Running):**
+
+```python
+# Runs every hour during shadow period
+1. Query source table row count
+2. Query target table row count
+3. If drift > threshold:
+   → Trigger incremental sync
+   → Alert monitoring
+   → Log to validation_results
+4. Sample-based checksum every 6 hours
+5. Full validation once per day
+```
+
+**Reconciliation Actions:**
+- **Acceptable drift:** Log and continue (e.g., < 0.01% for incremental lag)
+- **Drift exceeded:** Auto-trigger incremental sync
+- **Validation failure:** Alert consultant, block cutover
+- **Schema mismatch:** Critical alert, manual intervention required
+
+### Certification Reports
+
+**Migration Certification Document (Auto-Generated):**
+
+```markdown
+# Migration Certification Report
+Assessment ID: assessment-a3f2dd
+Migration Period: 2026-01-10 to 2026-01-24
+Validated: 2026-01-24 15:30 CET
+
+## Summary
+✓ 150/150 tables migrated successfully
+✓ 100% row count validation passed
+✓ 100% schema validation passed
+✓ 99.8% checksum validation passed (3 tables under threshold)
+
+## Detailed Results
+Database: analytics (45 tables)
+  All tables validated ✓
+  Total rows: 1,245,332,891 (source) → 1,245,332,891 (target)
+  Checksum match: 100%
+
+Database: logs (80 tables)
+  All tables validated ✓
+  Total rows: 5,892,445,022 (source) → 5,892,445,108 (target)
+  Drift: +86 rows (0.0000015%) - within tolerance
+
+## Sign-off
+This migration has passed all validation checks and is certified 
+for production cutover.
+
+Consultant: [Name]
+Date: 2026-01-24
+```
+
+### Integration Points
+
+**PostgreSQL Schema:**
+```sql
+-- Track validation results
+validation_results (validation_type, status, source_value, target_value)
+
+-- Link to migration jobs
+migration_jobs.validation_status VARCHAR(20) -- 'pending', 'passed', 'failed'
+migration_jobs.last_validated_at TIMESTAMPTZ
+migration_jobs.validation_details JSONB
+```
+
+**CLI Commands:**
+```bash
+# Validate specific table
+aws2openstack validate table   --assessment-id assessment-a3f2dd   --table analytics.events_table
+
+# Validate all tables in assessment
+aws2openstack validate all   --assessment-id assessment-a3f2dd   --checks row_count,schema,checksum
+
+# Generate certification report
+aws2openstack validate report   --assessment-id assessment-a3f2dd   --output ./certification-report.pdf
+```
+
+**MCP Server Tools:**
+```
+get_validation_status(assessment_id)
+query_failed_validations(assessment_id)
+get_data_drift_trend(table_name, days)
+compare_table_statistics(source_table, target_table)
+```
+
+### Business Value
+
+**Why Validation is Core:**
+
+1. **Risk Mitigation:** Prove data integrity before cutover
+2. **Compliance:** Audit trail for regulated industries (GDPR, finance)
+3. **Customer Confidence:** Certification reports provide sign-off documentation
+4. **Early Detection:** Catch issues during migration, not after cutover
+5. **SLA Support:** Quantifiable metrics for migration success
+
+**Competitive Advantage:**
+- Most migration tools have basic row counts only
+- Comprehensive validation is rare and highly valued
+- Certification reports enable consultant sign-off
+- Continuous validation during shadow running is differentiator
+
+**Implementation Priority:**
+- Phase 2: Validation schema and basic row count checks
+- Phase 3: Full validation suite (checksum, schema, sampling)
+- Phase 4: Continuous reconciliation for shadow running
+
+---
+
 ## Current Status
 
 ### Phase 1: Complete ✅
