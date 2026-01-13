@@ -1,8 +1,9 @@
 """SQLAlchemy ORM models for PostgreSQL database."""
 
+import json
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
@@ -16,12 +17,47 @@ from sqlalchemy import (
     String,
     Text,
     TIMESTAMP,
+    TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from aws2openstack.persistence.base import Base
+
+
+class PortableArray(TypeDecorator):
+    """Portable array type that works with PostgreSQL and SQLite.
+
+    Uses native ARRAY in PostgreSQL, JSON in SQLite.
+    """
+
+    impl = JSON
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(ARRAY(Text))
+        else:
+            return dialect.type_descriptor(JSON)
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == "postgresql":
+            return value
+        else:
+            # For SQLite, store as JSON
+            return json.dumps(value) if value else None
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == "postgresql":
+            return value
+        else:
+            # For SQLite, parse JSON
+            return json.loads(value) if value else None
 
 
 class Assessment(Base):
@@ -36,13 +72,13 @@ class Assessment(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
     region = Column(String(50), nullable=False)
     aws_account_id = Column(String(12), nullable=False)
     tool_version = Column(String(20), nullable=False)
-    services = Column(ARRAY(Text), nullable=False)
+    services = Column(PortableArray, nullable=False)
     status = Column(String(20), server_default="completed")
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -97,7 +133,7 @@ class MappingTemplate(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     name = Column(String(100), nullable=False)
     source_service = Column(String(50), nullable=False)
@@ -130,7 +166,7 @@ class TransformationResult(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     assessment_id = Column(
         PG_UUID(as_uuid=True),
@@ -168,7 +204,7 @@ class MigrationJob(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     assessment_id = Column(
         PG_UUID(as_uuid=True),
@@ -228,7 +264,7 @@ class ValidationResult(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     migration_job_id = Column(
         PG_UUID(as_uuid=True),
@@ -263,7 +299,7 @@ class GlueDatabase(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     assessment_id = Column(
         PG_UUID(as_uuid=True),
@@ -302,7 +338,7 @@ class GlueTable(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     database_id = Column(
         PG_UUID(as_uuid=True),
@@ -318,12 +354,12 @@ class GlueTable(Base):
     table_format = Column(String(50), nullable=False)
     storage_location = Column(Text, nullable=False)
     estimated_size_gb = Column(Numeric(12, 2))
-    partition_keys = Column(ARRAY(Text))
+    partition_keys = Column(PortableArray)
     column_count = Column(Integer, nullable=False)
     last_updated = Column(TIMESTAMP(timezone=True))
     is_iceberg = Column(Boolean, nullable=False)
     migration_readiness = Column(String(20), nullable=False)
-    notes = Column(ARRAY(Text))
+    notes = Column(PortableArray)
 
     # Relationships
     database = relationship("GlueDatabase", back_populates="tables")
@@ -347,7 +383,7 @@ class IAMRole(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     assessment_id = Column(
         PG_UUID(as_uuid=True),
@@ -357,7 +393,7 @@ class IAMRole(Base):
     role_name = Column(String(255), nullable=False)
     role_arn = Column(Text, nullable=False)
     policy_document = Column(JSON)
-    used_by_services = Column(ARRAY(Text))
+    used_by_services = Column(PortableArray)
 
     # Relationships
     assessment = relationship("Assessment", back_populates="iam_roles")
@@ -377,7 +413,7 @@ class VPCResource(Base):
     id = Column(
         PG_UUID(as_uuid=True),
         primary_key=True,
-        server_default=func.gen_random_uuid(),
+        default=uuid4,
     )
     assessment_id = Column(
         PG_UUID(as_uuid=True),
@@ -385,8 +421,8 @@ class VPCResource(Base):
         nullable=False,
     )
     vpc_id = Column(String(50), nullable=False)
-    subnet_ids = Column(ARRAY(Text))
-    security_group_ids = Column(ARRAY(Text))
+    subnet_ids = Column(PortableArray)
+    security_group_ids = Column(PortableArray)
     resource_type = Column(String(50))
     meta = Column("metadata", JSON)
 
