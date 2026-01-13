@@ -85,6 +85,94 @@ Benefits:
 
 ---
 
+
+## Migration Strategies
+
+The toolkit supports two deployment approaches to meet different business requirements:
+
+### 1. Big Bang Migration
+
+**One-time cutover with coordinated switchover:**
+
+```
+Day 1: Assess → Transform → Generate Terraform
+Day 2: Apply infrastructure in OpenStack
+Day 3: Full data copy (all tables in parallel)
+Day 4: Validate data integrity
+Day 5: DNS/endpoint cutover → Go live
+```
+
+**Characteristics:**
+- Single synchronized cutover event
+- Shorter total timeline (days to weeks)
+- Higher risk - requires extensive pre-migration validation
+- Suitable for: Dev/test environments, smaller datasets, maintenance window-tolerant workloads
+
+**Data Copy:**
+- Full table copy using AWS DataSync or rclone
+- Parallel migration of independent tables
+- Checkpoint/resume capability for large tables
+
+### 2. Shadow Running (Full + Incremental Sync)
+
+**Production-grade migration with parallel validation:**
+
+```
+Week 1: Assess → Transform → Generate → Deploy target infrastructure
+Week 2: Initial full data copy (baseline sync)
+Week 3-N: Incremental sync running continuously (CDC)
+        → Both systems active (shadow mode)
+        → Data validation and reconciliation
+        → Gradual query migration to new system
+Week N+1: Final cutover when validated
+```
+
+**Characteristics:**
+- Initial full copy + continuous incremental synchronization
+- Both AWS and OpenStack environments run in parallel
+- Zero-downtime cutover (gradual DNS/traffic shift)
+- Lower risk - can validate and roll back
+- Suitable for: Production lakehouses, critical workloads, large datasets
+
+**Data Synchronization:**
+- **Full sync:** Initial baseline copy of all tables
+- **Incremental sync:** Change Data Capture (CDC) mechanisms:
+  - S3 event notifications → trigger incremental copies
+  - Periodic diff detection for Glue Catalog changes
+  - Timestamp-based incremental table updates
+- **Validation:** Continuous data reconciliation during shadow period
+- **Cutover:** Gradual traffic shift (read queries first, then writes)
+
+### Architectural Support
+
+Both strategies share the same core pipeline (assess → transform → generate) but differ in orchestration:
+
+**PostgreSQL Tracking:**
+- `migration_jobs` table tracks both full and incremental copies
+- `last_sync_timestamp` per table for incremental updates
+- `sync_mode` field: `full`, `incremental`, `completed`
+
+**Data Orchestration (Phase 3):**
+- Big Bang: Parallel full table copies, progress tracking
+- Shadow Running: Initial full copy + continuous incremental jobs
+- CDC integration: S3 events, Glue Catalog change streams
+- Reconciliation: Row counts, checksums, sample data validation
+
+### Business Value
+
+**Why Both Matter:**
+- **Dev/Test migrations:** Big bang is faster and simpler
+- **Production migrations:** Shadow running is enterprise requirement
+- **Customer choice:** Different risk tolerances and downtime windows
+- **Competitive advantage:** Most tools only support big bang
+
+**Implementation Priority:**
+- Phase 2: Data orchestration tracking (schema supports both modes)
+- Phase 3: Big bang implementation (simpler, validates architecture)
+- Phase 4: Incremental sync + CDC (production-grade capability)
+
+---
+
 ## Current Status
 
 ### Phase 1: Complete ✅
