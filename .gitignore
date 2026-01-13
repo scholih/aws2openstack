@@ -25,3 +25,11 @@ wheels/
 
 # Worktrees
 .worktrees/
+
+# Test environment
+testdata/generated/
+.env.test
+terraform/**/.terraform/
+terraform/**/.terraform.lock.hcl
+terraform/**/terraform.tfstate*
+terraform/**/terraform.tfvars
