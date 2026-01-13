@@ -48,7 +48,11 @@
       "Bash(bd list:*)",
       "Bash(bd ready:*)",
       "mcp__plugin_serena_serena__create_text_file",
-      "mcp__plugin_serena_serena__replace_content"
+      "mcp__plugin_serena_serena__replace_content",
+      "Bash(.venv/bin/python:*)",
+      "Bash(bd close:*)",
+      "Bash(chmod:*)",
+      "Bash(bd sync:*)"
     ]
   }
 }
